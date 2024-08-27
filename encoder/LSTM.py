@@ -1,100 +1,111 @@
 import pandas as pd
 import numpy as np
-import os
+import glob
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+import torch.nn as nn
+import torch.optim as optim
+import matplotlib.pyplot as plt
 
 
-log_dir = 'path_to_log_files'
-label_file = 'path_to_k_value_file'
+# 读取所有日志文件
+log_files = glob.glob('../clean_data/log2/*.xls')
+data_list = []
 
-logs = []
-for file in os.listdir(log_dir):
-    if file.endswith('.xls'):
-        df = pd.read_excel(os.path.join(log_dir, file))
-        logs.append(df)
+for file in log_files:
+    df = pd.read_excel(file)
+    data_list.append(df)
 
-k_values = pd.read_excel(label_file)
+# 合并所有数据
+data = pd.concat(data_list, ignore_index=True)
 
-data = pd.concat(logs, axis=0, ignore_index=True)
-data = pd.merge(data, k_values, on='bar_code')
+# 读取K值标签文件
+k_values = pd.read_excel('../clean_data/K_value.xls')
 
+# 数据标准化
 scaler = MinMaxScaler()
-data_scaled = scaler.fit_transform(data)
+scaled_data = scaler.fit_transform(data[['电压(mV)', '电流(mA)', '容量(mAh)', '能量(mWh)',
+                                         '温度(℃)', '步次时间(s)', '电流线电压(mV)',
+                                         '压差(mV)', '接触阻抗(mΩ)', '线路阻抗(mΩ)']])
 
-X = []
-y = []
 
-sequence_length = 10
-for i in range(len(data_scaled) - sequence_length):
-    X.append(data_scaled[i:i+sequence_length])
-    y.append(data_scaled[i+sequence_length][-1])
+# 转换为时间序列数据
+def create_sequences(data, k_values, seq_length):
+    sequences = []
+    labels = []
+    for i in range(len(data) - seq_length):
+        seq = data[i:i + seq_length]
+        label = k_values[seq_length]  # K值
+        sequences.append(seq)
+        labels.append(label)
+    return np.array(sequences), np.array(labels)
 
-X = np.array(X)
-y = np.array(y)
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+seq_length = 50  # 根据需要调整序列长度
+sequences, labels = create_sequences(scaled_data, k_values['K_value(mV/d)'].values, seq_length)
+
+# 转换为张量
+sequences = torch.tensor(sequences, dtype=torch.float32)
+labels = torch.tensor(labels, dtype=torch.float32)
+
+# 创建DataLoader
+dataset = TensorDataset(sequences, labels)
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
 
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_size):
         super(LSTMModel, self).__init__()
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        h_0 = torch.zeros(num_layers, x.size(0), hidden_size).to(device)
-        c_0 = torch.zeros(num_layers, x.size(0), hidden_size).to(device)
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
 
-        out, _ = self.lstm(x, (h_0, c_0))
+        out, _ = self.lstm(x, (h0, c0))
         out = self.fc(out[:, -1, :])
         return out
 
 
-input_size = X_train.shape[2]  # 特征数
-hidden_size = 64
+input_size = sequences.shape[2]
+hidden_size = 128
 num_layers = 2
 output_size = 1
-num_epochs = 50
-batch_size = 64
-learning_rate = 0.001
 
-train_data = TensorDataset(torch.tensor(X_train).float(), torch.tensor(y_train).float())
-train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+model = LSTMModel(input_size, hidden_size, num_layers, output_size)
 
-test_data = TensorDataset(torch.tensor(X_test).float(), torch.tensor(y_test).float())
-test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = LSTMModel(input_size, hidden_size, num_layers, output_size).to(device)
 
 criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
+num_epochs = 20
+model.train()
 for epoch in range(num_epochs):
-    model.train()
-    for batch_X, batch_y in train_loader:
-        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-        outputs = model(batch_X)
-        loss = criterion(outputs, batch_y)
-
+    for sequences_batch, labels_batch in dataloader:
         optimizer.zero_grad()
+        outputs = model(sequences_batch)
+        loss = criterion(outputs, labels_batch)
         loss.backward()
         optimizer.step()
 
-    print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+    print(f'Epoch {epoch + 1}/{num_epochs}, Loss: {loss.item()}')
+
 
 model.eval()
 with torch.no_grad():
-    test_loss = 0
-    for batch_X, batch_y in test_loader:
-        batch_X, batch_y = batch_X.to(device), batch_y.to(device)
-        outputs = model(batch_X)
-        loss = criterion(outputs, batch_y)
-        test_loss += loss.item()
+    predictions = model(sequences).cpu().numpy()
 
-    print(f'Test Loss: {test_loss / len(test_loader):.4f}')
+# 将预测值反归一化
+predicted_k_values = scaler.inverse_transform(predictions)
+
+plt.plot(k_values['K_value(mV/d)'].values, label='Actual K Values')
+plt.plot(predicted_k_values, label='Predicted K Values')
+plt.legend()
+plt.show()
+
+torch.save(model.state_dict(), 'lstm_model.pth')
 
