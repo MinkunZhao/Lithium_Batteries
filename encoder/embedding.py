@@ -1,3 +1,6 @@
+import random
+
+import openpyxl
 import pandas as pd
 import numpy as np
 import xlrd
@@ -13,7 +16,17 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
+init = nn.init.xavier_uniform_
 
+seed = 2024
+def init_seed():
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
 def search_bar_code(kf, code):
     for row in range(1, 11551):
@@ -22,11 +35,10 @@ def search_bar_code(kf, code):
     return False
 
 
-files = os.listdir("../clean_data/log2")
+files = os.listdir("../clean_data/splited_log")
 
-np.random.seed(42)
 # num_samples = 11550
-num_samples = 18
+num_samples = 11550
 log_steps = 5000
 data = {
     'bar_code': [''] * num_samples,
@@ -55,57 +67,48 @@ data = {
 }
 # print(data)
 
-k_value = xlrd.open_workbook("../clean_data/K_value.xls")
-table_k_value = k_value.sheets()[0]
-cnt = 0
-for f in files:
-    log = xlrd.open_workbook("../clean_data/log/" + f)
-    table_log = log.sheets()[0]
-    idx = search_bar_code(table_k_value, f[:24])
-    if idx is False:
-        continue
-    else:
-        data['bar_code'][cnt] = f[:24]
-        data['voltage'][cnt] = table_log.col_values(1, start_rowx=1, end_rowx=table_log.nrows)
-        data['current'][cnt] = table_log.col_values(2, start_rowx=1, end_rowx=table_log.nrows)
-        data['capacity'][cnt] = table_log.col_values(3, start_rowx=1, end_rowx=table_log.nrows)
-        data['energy'][cnt] = table_log.col_values(4, start_rowx=1, end_rowx=table_log.nrows)
-        data['temperature'][cnt] = table_log.col_values(7, start_rowx=1, end_rowx=table_log.nrows)
-        data['current_line_voltage'][cnt] = table_log.col_values(10, start_rowx=1, end_rowx=table_log.nrows)
-        data['voltage_difference'][cnt] = table_log.col_values(11, start_rowx=1, end_rowx=table_log.nrows)
-        data['contact_impedance'][cnt] = table_log.col_values(12, start_rowx=1, end_rowx=table_log.nrows)
-        data['line_impedance'][cnt] = table_log.col_values(13, start_rowx=1, end_rowx=table_log.nrows)
-        data['K_value'][cnt] = table_k_value.cell_value(idx, 6)
-        data['step_name'][cnt] = table_log.col_values(6, start_rowx=1, end_rowx=table_log.nrows)
-        data['event_info'][cnt] = table_log.col_values(9, start_rowx=1, end_rowx=table_log.nrows)
-        print(cnt)
-        cnt += 1
-
-df = pd.DataFrame(data)
-print(df)
-
-
+# k_value = xlrd.open_workbook("../clean_data/K_value.xls")
+# table_k_value = k_value.sheets()[0]
+# cnt = 0
+# for f in tqdm(files, desc="data loading"):
+#     log = openpyxl.load_workbook("../clean_data/splited_log/" + f)
+#     table_log = log.active  # 获取第一个工作表
+#
+#     idx = search_bar_code(table_k_value, f[:24])
+#     if idx is False:
+#         continue
+#     else:
+#         data['bar_code'][cnt] = f[:24]
+#         data['voltage'][cnt] = [table_log.cell(row=i, column=2).value for i in range(2, table_log.max_row + 1)]
+#         data['current'][cnt] = [table_log.cell(row=i, column=3).value for i in range(2, table_log.max_row + 1)]
+#         data['capacity'][cnt] = [table_log.cell(row=i, column=4).value for i in range(2, table_log.max_row + 1)]
+#         data['energy'][cnt] = [table_log.cell(row=i, column=5).value for i in range(2, table_log.max_row + 1)]
+#         data['temperature'][cnt] = [table_log.cell(row=i, column=8).value for i in range(2, table_log.max_row + 1)]
+#
+#         data['K_value'][cnt] = table_k_value.cell_value(idx, 6)
+#         cnt += 1
+# print('data num: {}'.format(cnt))
+# df = pd.DataFrame(data)
+# df.to_pickle('splited_log.pkl')
+df = pd.read_pickle('../clean_data/splited_log.pkl')
 # 特征工程
 def feature_engineering(df):
     for i in range(num_samples):
-        df['voltage_diff'][i] = pd.Series(df['voltage'][i]).diff().fillna(0)
-        df['current_diff'][i] = pd.Series(df['current'][i]).diff().fillna(0)
-        df['capacity_diff'][i] = pd.Series(df['capacity'][i]).diff().fillna(0)
-        df['energy_diff'][i] = pd.Series(df['energy'][i]).diff().fillna(0)
-        df['temperature_diff'][i] = pd.Series(df['temperature'][i]).diff().fillna(0)
+        df.at[i, 'voltage_diff'] = pd.Series(df['voltage'][i]).diff().fillna(0).values
+        df.at[i, 'current_diff'] = pd.Series(df['current'][i]).diff().fillna(0).values
+        df.at[i, 'capacity_diff'] = pd.Series(df['capacity'][i]).diff().fillna(0).values
+        df.at[i, 'energy_diff'] = pd.Series(df['energy'][i]).diff().fillna(0).values
+        df.at[i, 'temperature_diff'] = pd.Series(df['temperature'][i]).diff().fillna(0).values
 
-    for i in range(num_samples):
-        df['voltage_diff_2'][i] = pd.Series(df['voltage'][i]).diff(2).fillna(0)
-        df['current_diff_2'][i] = pd.Series(df['current'][i]).diff(2).fillna(0)
-        df['capacity_diff_2'][i] = pd.Series(df['capacity'][i]).diff(2).fillna(0)
-        df['energy_diff_2'][i] = pd.Series(df['energy'][i]).diff(2).fillna(0)
-        df['temperature_diff_2'][i] = pd.Series(df['temperature'][i]).diff(2).fillna(0)
+        df.at[i, 'voltage_diff_2'] = pd.Series(df['voltage'][i]).diff(2).fillna(0).values
+        df.at[i, 'current_diff_2'] = pd.Series(df['current'][i]).diff(2).fillna(0).values
+        df.at[i, 'capacity_diff_2'] = pd.Series(df['capacity'][i]).diff(2).fillna(0).values
+        df.at[i, 'energy_diff_2'] = pd.Series(df['energy'][i]).diff(2).fillna(0).values
+        df.at[i, 'temperature_diff_2'] = pd.Series(df['temperature'][i]).diff(2).fillna(0).values
 
     return df
 
-
 df = feature_engineering(df)
-print(df)
 
 # 选择用于回归的特征
 features = ['voltage_diff', 'current_diff', 'capacity_diff', 'energy_diff', 'temperature_diff',
@@ -113,8 +116,9 @@ features = ['voltage_diff', 'current_diff', 'capacity_diff', 'energy_diff', 'tem
             ]
 
 # 标准化特征
-scaler = StandardScaler()
-df[features] = scaler.fit_transform(df[features])
+# scaler = StandardScaler()
+df[features] = df[features].map(lambda x: np.mean(x) if isinstance(x, np.ndarray) else x)
+# df[features] = scaler.fit_transform(df[features].values)
 
 
 class Battery(Dataset):
@@ -137,8 +141,8 @@ train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
 train_dataset = Battery(train_df)
 test_dataset = Battery(test_df)
 
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=256, shuffle=False)
 
 
 class RegressionModel(nn.Module):
@@ -147,6 +151,7 @@ class RegressionModel(nn.Module):
         self.fc1 = nn.Linear(input_dim, 64)
         self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 1)
+        self._init_weight()
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
@@ -154,9 +159,14 @@ class RegressionModel(nn.Module):
         x = self.fc3(x)
         return x
 
+    def _init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init(m.weight)
+                nn.init.zeros_(m.bias)
 
 input_dim = len(features)
-model = RegressionModel(input_dim)
+model = RegressionModel(input_dim).cuda()
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -166,13 +176,13 @@ def train_model(model, train_loader, criterion, optimizer, epochs=50):
     for epoch in range(epochs):
         running_loss = 0.0
         for inputs, targets in train_loader:
+            inputs, targets = inputs.cuda(), targets.cuda()
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets.unsqueeze(1))
             loss.backward()
             optimizer.step()
             running_loss += loss.item() * inputs.size(0)
-
         epoch_loss = running_loss / len(train_loader.dataset)
         print(f'Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss:.4f}')
 
@@ -182,6 +192,7 @@ def evaluate_model(model, test_loader, criterion):
     running_loss = 0.0
     with torch.no_grad():
         for inputs, targets in test_loader:
+            inputs, targets = inputs.cuda(), targets.cuda()
             outputs = model(inputs)
             loss = criterion(outputs, targets.unsqueeze(1))
             running_loss += loss.item() * inputs.size(0)
