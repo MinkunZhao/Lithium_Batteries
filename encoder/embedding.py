@@ -1,17 +1,10 @@
 import random
-
-import openpyxl
 import pandas as pd
 import numpy as np
-import xlrd
 import os
-# from sklearn.model_selection import train_test_split
-# from sklearn.preprocessing import StandardScaler
-# from sklearn.linear_model import LinearRegression
-# from sklearn.metrics import mean_squared_error
-# from sklearn.ensemble import RandomForestRegressor
+
+from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -190,15 +183,23 @@ def train_model(model, train_loader, criterion, optimizer, epochs=50):
 def evaluate_model(model, test_loader, criterion):
     model.eval()
     running_loss = 0.0
+    running_error_rate = 0.0
+    all_targets = []
+    all_outputs = []
     with torch.no_grad():
         for inputs, targets in test_loader:
             inputs, targets = inputs.cuda(), targets.cuda()
             outputs = model(inputs)
             loss = criterion(outputs, targets.unsqueeze(1))
             running_loss += loss.item() * inputs.size(0)
-
+            error_rate = torch.abs((targets.unsqueeze(1) - outputs) / targets.unsqueeze(1)) * 100
+            running_error_rate += error_rate.mean().item() * inputs.size(0)
+            all_targets.extend(targets.cpu().numpy())
+            all_outputs.extend(outputs.cpu().numpy())
     epoch_loss = running_loss / len(test_loader.dataset)
-    print(f'Test Loss: {epoch_loss:.4f}')
+    avg_error_rate = running_error_rate / len(test_loader.dataset)
+    r2 = r2_score(all_targets, all_outputs)
+    print(f'Test Loss: {epoch_loss:.4f}', f'Error_rate: {avg_error_rate:.4f}', f'R2: {r2:.4f}')
 
 
 train_model(model, train_loader, criterion, optimizer, epochs=50)
