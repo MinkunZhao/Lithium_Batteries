@@ -100,24 +100,18 @@ class GRUModel(nn.Module):
         return out
 
 
-# 定义模型超参数
 input_size = len(scaled_log_data[0][0])  # 输入特征数
 hidden_size = 64  # 隐藏层神经元数
 output_size = 1  # K值为单输出
 num_layers = 2  # GRU层数
 
-# 选择设备（CPU或GPU）
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# 初始化模型
 model = GRUModel(input_size=10, hidden_size=50, output_size=1, num_layers=2, device=device)
 
-
-# 定义损失函数和优化器
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# 训练模型
 num_epochs = 20
 model.train()
 
@@ -150,8 +144,6 @@ with torch.no_grad():
 # 转换成numpy数组
 predictions = np.concatenate(predictions, axis=0)
 actuals = np.concatenate(actuals, axis=0)
-
-# 可以计算误差或进行可视化
 
 mse = mean_squared_error(actuals, predictions)
 rmse = np.sqrt(mse)
