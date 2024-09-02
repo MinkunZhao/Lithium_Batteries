@@ -9,7 +9,6 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 
 
-# 读取所有日志文件
 log_files = glob.glob('../clean_data/log2/*.xls')
 data_list = []
 
@@ -17,20 +16,16 @@ for file in log_files:
     df = pd.read_excel(file)
     data_list.append(df)
 
-# 合并所有数据
 data = pd.concat(data_list, ignore_index=True)
 
-# 读取K值标签文件
 k_values = pd.read_excel('../clean_data/K_value.xls')
 
-# 数据标准化
 scaler = MinMaxScaler()
 scaled_data = scaler.fit_transform(data[['电压(mV)', '电流(mA)', '容量(mAh)', '能量(mWh)',
                                          '温度(℃)', '步次时间(s)', '电流线电压(mV)',
                                          '压差(mV)', '接触阻抗(mΩ)', '线路阻抗(mΩ)']])
 
 
-# 转换为时间序列数据
 def create_sequences(data, k_values, seq_length):
     sequences = []
     labels = []
@@ -88,6 +83,8 @@ for epoch in range(num_epochs):
     for sequences_batch, labels_batch in dataloader:
         optimizer.zero_grad()
         outputs = model(sequences_batch)
+        # 改变 labels_batch 的形状，使其与 outputs 的形状匹配
+        labels_batch = labels_batch.view(-1, 1)
         loss = criterion(outputs, labels_batch)
         loss.backward()
         optimizer.step()
@@ -99,8 +96,17 @@ model.eval()
 with torch.no_grad():
     predictions = model(sequences).cpu().numpy()
 
-# 将预测值反归一化
-predicted_k_values = scaler.inverse_transform(predictions)
+# 首先将 predictions 转换为与原始数据形状匹配的数组
+predictions_expanded = np.zeros((predictions.shape[0], scaled_data.shape[1]))
+
+# 只在第一列放入预测的K值，其它列放入0
+predictions_expanded[:, 0] = predictions[:, 0]
+
+# 反归一化
+predicted_k_values = scaler.inverse_transform(predictions_expanded)
+
+# 只保留反归一化后的第一列
+predicted_k_values = predicted_k_values[:, 0]
 
 plt.plot(k_values['K_value(mV/d)'].values, label='Actual K Values')
 plt.plot(predicted_k_values, label='Predicted K Values')
