@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, Dataset
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import r2_score
 import numpy as np
+import torch.nn.utils.rnn as rnn_utils
 
 
 class BatteryDataset(Dataset):
@@ -30,6 +31,17 @@ class BatteryDataset(Dataset):
         return self.data[idx], self.labels[idx]
 
 
+def collate_fn(batch):
+    # 对batch中的数据进行填充，使其序列长度一致
+    data = [item[0] for item in batch]
+    labels = [item[1] for item in batch]
+
+    padded_data = rnn_utils.pad_sequence(data, batch_first=True)
+    labels = torch.tensor(labels, dtype=torch.float32)
+
+    return padded_data, labels
+
+
 class GRUModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_size):
         super(GRUModel, self).__init__()
@@ -50,7 +62,7 @@ def load_data(data_dir, k_values_file, scaler):
     file_paths = [os.path.join(data_dir, fname) for fname in os.listdir(data_dir) if fname.endswith('.xlsx')]
 
     dataset = BatteryDataset(file_paths, k_values, scaler)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=collate_fn)
     return dataloader
 
 
