@@ -1,4 +1,6 @@
 import os
+from copy import deepcopy
+
 import pandas as pd
 import numpy as np
 from sklearn.metrics import r2_score
@@ -106,17 +108,66 @@ class LSTMModel(nn.Module):
         return out
 
 
-def train_model(model, dataloader, criterion, optimizer, num_epochs=20):
-    model.train()
+input_size = 10
+hidden_size = 64
+num_layers = 2
+output_size = 1
+patience = 5
+
+scaler = MinMaxScaler()
+train_loader = load_data('../clean_data/train', '../clean_data/K_value.xls', scaler)
+test_loader = load_data('../clean_data/test', '../clean_data/K_value.xls', scaler)
+
+
+def train_epoch(model, epoch, num_epochs, optimizer, dataloader, criterion):
+    for data, labels, lengths in tqdm(dataloader, desc='training'):
+        data, labels = data.cuda(), labels.cuda()
+        outputs = model(data, lengths)
+        loss = criterion(outputs, labels)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+
+
+def train_model(model, dataloader, criterion, optimizer, num_epochs=300):
+    now_patience = 0
+    best_metric = -1e9
+    best_state_dict = None
+    test_step = 3
     for epoch in range(num_epochs):
-        for data, labels, lengths in tqdm(dataloader, desc='training'):
+        model.train()
+        train_epoch(model, epoch, num_epochs, optimizer, dataloader, criterion)
+        if epoch % test_step == 0:
+            eval_result = evaluate_model(model, test_loader)
+            if eval_result > best_metric:
+                now_patience = 0
+                best_metric = eval_result
+                best_state_dict = deepcopy(model.state_dict())
+            else:
+                now_patience += 1
+        if patience == now_patience:
+            break
+    model.load_state_dict(best_state_dict)
+    test_model(model, test_loader)
+
+
+def evaluate_model(model, dataloader):
+    model.eval()
+    preds = []
+    grounds = []
+    with torch.no_grad():
+        for data, labels, lengths in tqdm(dataloader, desc='testing'):
             data, labels = data.cuda(), labels.cuda()
             outputs = model(data, lengths)
-            loss = criterion(outputs, labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        print(f'Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}')
+            preds.append(outputs.cpu().numpy())
+            grounds.append(labels.cpu().numpy())
+    preds = np.concatenate(preds)
+    grounds = np.concatenate(grounds)
+    acc = 100.0 - (np.mean(np.abs(grounds - preds) / grounds) * 100)
+    r2 = r2_score(grounds, preds)
+    print(f'Accurate: {acc:.2f}%', f'R^2 Score: {r2:.4f}')
+    return acc
 
 
 def test_model(model, dataloader):
@@ -131,30 +182,20 @@ def test_model(model, dataloader):
             grounds.append(labels.cpu().numpy())
     preds = np.concatenate(preds)
     grounds = np.concatenate(grounds)
-    mean_error_rate = np.mean(np.abs(grounds - preds) / grounds) * 100
+    acc = 100.0 - (np.mean(np.abs(grounds - preds) / grounds) * 100)
     r2 = r2_score(grounds, preds)
-    print(f'Mean Error Rate: {mean_error_rate:.2f}%', f'R^2 Score: {r2:.4f}')
+    print(f'Accurate: {acc:.2f}%', f'R^2 Score: {r2:.4f}')
 
 
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    scaler = MinMaxScaler()
-    train_loader = load_data('../clean_data/train', '../clean_data/K_value.xls', scaler)
-    test_loader = load_data('../clean_data/test', '../clean_data/K_value.xls', scaler)
-
-    input_size = 10
-    hidden_size = 64
-    num_layers = 2
-    output_size = 1
     model = LSTMModel(input_size, hidden_size, num_layers, output_size).to(device)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    train_model(model, train_loader, criterion, optimizer, num_epochs=40)
-    test_model(model, test_loader)
+    train_model(model, train_loader, criterion, optimizer)
 
 
-if __name__ == '__main__':
-    main()
+main()
